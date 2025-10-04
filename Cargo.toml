@@ -2,6 +2,9 @@
 name = "loco-factory"
 version = "0.1.0"
 edition = "2024"
+authors = ["Fabiano Martins <fabiano.paula.martins@gmail.com>"]
+license = "MIT"
+repository = "https://github.com/ofabianomartins/loco_factory"
 
 [dependencies]
 chrono = "0.4.42"
