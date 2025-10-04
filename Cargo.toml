@@ -4,4 +4,14 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-sea-orm = "1.1.16"
+chrono = "0.4.42"
+paste = "1.0.15"
+sea-orm = { version = "1.1", features = [
+  "debug-print",
+  "sqlx-sqlite",
+  "sqlx-postgres",
+  "runtime-tokio-rustls",
+  "macros",
+] }
+tokio = { version = "1.45", default-features = false, features = ["rt-multi-thread", "test-util", "full"] }
+uuid = { version = "1.18.1", features = ["v4"] }
