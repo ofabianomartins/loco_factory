@@ -27,82 +27,125 @@ macro_rules! define_factory {
             fields: {
                 $($field:ident: $field_type:ty = $default:expr),* $(,)?
             }
+            $(, lazy_fields: {
+                $($lazy_field:ident: $lazy_type:ty = $lazy_default:expr),* $(,)?
+            })?
         }
     ) => {
-
-        // Função factory principal
-        $(#[$meta])*
-        pub async fn $fn_name(db: &sea_orm::DatabaseConnection) -> Result<$model, sea_orm::DbErr> {
-            type Active = $active_model;
-            let model = Active {
-                $(
-                    $field: sea_orm::ActiveValue::Set($default),
-                )*
-                ..Default::default()
-            };
-            model.insert(db).await
-        }
-
-
-        // Usar paste para gerar nomes compostos
         ::paste::paste! {
+            // Função factory principal
+            $(#[$meta])*
+            pub async fn [<create_ $fn_name>](db: &sea_orm::DatabaseConnection) -> Result<$model, sea_orm::DbErr> {
+                type Active = $active_model;
+                let model = Active {
+                    $(
+                        $field: sea_orm::ActiveValue::Set($default),
+                    )*
+                    $($(
+                        $lazy_field: sea_orm::ActiveValue::Set($lazy_default(db).await?),
+                    )*)?
+                    ..Default::default()
+                };
+                model.insert(db).await
+            }
+
             // Builder struct
             #[derive(Debug, Clone)]
-            pub struct [<$fn_name:camel Builder>] {
+            #[allow(dead_code)]
+            pub struct [<Create $fn_name:camel Builder>] {
                 $(
                     $field: $field_type,
                 )*
+                $($(
+                    $lazy_field: Option<$lazy_type>,
+                )*)?
             }
 
-            impl Default for [<$fn_name:camel Builder>] {
+            impl Default for [<Create $fn_name:camel Builder>] {
                 fn default() -> Self {
                     Self::new()
                 }
             }
 
-            impl [<$fn_name:camel Builder>] {
+            impl [<Create $fn_name:camel Builder>] {
                 /// Cria um novo builder com valores padrão
                 pub fn new() -> Self {
                     Self {
                         $(
                             $field: $default,
                         )*
+                        $($(
+                            $lazy_field: None,
+                        )*)?
                     }
                 }
 
                 $(
                     /// Define o valor de $field
+                    #[allow(dead_code)]
                     pub fn $field(mut self, value: $field_type) -> Self {
                         self.$field = value;
                         self
                     }
                 )*
 
+                $($(
+                    /// Define o valor de $lazy_field
+                    pub fn $lazy_field(mut self, value: $lazy_type) -> Self {
+                        self.$lazy_field = Some(value);
+                        self
+                    }
+                )*)?
+
                 /// Constrói e salva o model no banco
                 pub async fn create(self, db: &sea_orm::DatabaseConnection) -> Result<$model, sea_orm::DbErr> {
-                    let model = $active_model {
+                    type Active = $active_model;
+                    Active {
                         $(
                             $field: sea_orm::ActiveValue::Set(self.$field),
                         )*
+                        $($(
+                            $lazy_field: sea_orm::ActiveValue::Set(
+                                match self.$lazy_field {
+                                    Some(val) => val,
+                                    None => $lazy_default(db).await?,
+                                }
+                            ),
+                        )*)?
                         ..Default::default()
-                    };
-                    model.insert(db).await
+                    }
+                    .insert(db)
+                    .await
                 }
 
-                /// Constrói o model sem salvar (útil para testes)
+                /// Constrói o model sem salvar (requer todos os valores lazy)
+                #[allow(dead_code)]
                 pub fn build(self) -> $active_model {
-                    $active_model {
+                    type Active = $active_model;
+                    Active {
                         $(
                             $field: sea_orm::ActiveValue::Set(self.$field),
                         )*
+                        $($(
+                            $lazy_field: sea_orm::ActiveValue::Set(
+                                self.$lazy_field.expect(concat!("lazy field '", stringify!($lazy_field), "' must be set when using build()"))
+                            ),
+                        )*)?
                         ..Default::default()
                     }
                 }
             }
 
             /// Helper function para criar o builder
-            pub fn [<$fn_name _builder>]() -> [<$fn_name:camel Builder>] {
-                [<$fn_name:camel Builder>]::new()
+            #[allow(dead_code)]
+            pub fn [<create_ $fn_name _builder>]() -> [<Create $fn_name:camel Builder>] {
+                [<Create $fn_name:camel Builder>]::new()
+            }
+
+            /// Helper function to get model id
+            #[allow(dead_code)]
+            pub async fn [<get_ $fn_name _id>](db: &sea_orm::DatabaseConnection) -> Result<i32, sea_orm::DbErr> {
+                [<create_ $fn_name>](db).await.map(|s| s.id)
             }
         }
     };
@@ -250,20 +293,9 @@ mod factory_tests {
         specialties::Entity::find_by_id(id).one(db).await
     }
 
-    async fn find_doctor_by_uuid(
-        db: &DatabaseConnection,
-        uuid: Uuid,
-    ) -> Result<Option<doctors::Model>, DbErr> {
-        use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
-        doctors::Entity::find()
-            .filter(doctors::Column::Uuid.eq(uuid))
-            .one(db)
-            .await
-    }
-
     define_factory! {
         /// Cria uma specialty de teste
-        create_specialty => specialties::Model {
+        specialty => specialties::Model {
             active_model: specialties::ActiveModel,
             fields: {
                 name: String = "Test Specialty".to_string(),
@@ -274,26 +306,32 @@ mod factory_tests {
         }
     }
 
+    // async fn get_specialty_id(db: &DatabaseConnection) -> Result<i32, DbErr> {
+    //    create_specialty(db).await.map(|s| s.id)
+    // }
+
     define_factory! {
         /// Cria um doctor de teste
-        create_doctor => doctors::Model {
+        doctor => doctors::Model {
             active_model: doctors::ActiveModel,
             fields: {
                 first_name: String = "John".to_string(),
                 last_name: String = "Doe".to_string(),
                 email: String = format!("doctor_{}@example.com", Uuid::new_v4()),
-                specialty_id: i32 = 1,
                 license_number: String = format!("LIC{}", Uuid::new_v4().to_string()[..8].to_uppercase()),
                 uuid: Uuid = Uuid::new_v4(),
                 phone: Option<String> = Some("+5511999999999".to_string()),
                 is_active: bool = true,
+            },
+            lazy_fields: {
+                specialty_id: i32 = get_specialty_id,
             }
         }
     }
 
     define_factory! {
         /// Cria um patient de teste
-        create_patient => patients::Model {
+        patient => patients::Model {
             active_model: patients::ActiveModel,
             fields: {
                 first_name: String = "Maria".to_string(),
