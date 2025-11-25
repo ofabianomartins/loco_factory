@@ -1,5 +1,6 @@
 [package]
 name = "loco-factory"
+description = "It's a model data generator to sea_orm"
 version = "0.1.0"
 edition = "2024"
 authors = ["Fabiano Martins <fabiano.paula.martins@gmail.com>"]
